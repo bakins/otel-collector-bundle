@@ -1,6 +1,6 @@
-module github.com/bakins/otel-velairreceiver
+module github.com/bakins/otel-collector-bundle/receiver/velairreceiver
 
-go 1.23.3
+go 1.23
 
 require (
 	github.com/bakins/velair v0.0.0-20241122155946-a2220f1f4169
