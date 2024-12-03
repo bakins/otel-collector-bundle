@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -179,112 +180,161 @@ func (m *mqttReceiver) publishKeepalive(ctx context.Context) {
 	}
 }
 
-type metricHandler struct {
-	parser  func([]byte) (any, error)
-	handler func(any) pmetric.Metric
+type pathMatcher func(string) bool
+
+func exactMatcher(key string) pathMatcher {
+	return func(path string) bool {
+		return key == path
+	}
 }
 
-var topicTypes = map[string]map[string]metricHandler{
+func regexMatcher(pattern string) pathMatcher {
+	r := regexp.MustCompile(pattern)
+
+	return r.MatchString
+}
+
+type metricHandler struct {
+	parser  func([]byte) (any, error)
+	handler mqttHandler
+	matcher pathMatcher
+}
+
+type mqttHandler func(path string, value any) pmetric.Metric
+
+var topicTypes = map[string][]metricHandler{
 	"vebus": {
-		"Ac/Out/P": {
+		{
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.ac.output_power"),
+			matcher: exactMatcher("Ac/Out/P"),
+		},
+		{
+			parser:  parseDoubleValue,
+			handler: vebusDeviceHandler(`victron.ac.device.output_power`),
+			matcher: regexMatcher(`^Devices/\d+/Ac/Out/P$`),
+		},
+		{
+			parser:  parseDoubleValue,
+			handler: vebusDeviceHandler(`victron.ac.device.input_power`),
+			matcher: regexMatcher(`^Devices/\d+/Ac/In/P$`),
 		},
 	},
 	"system": {
-		"Ac/Consumption/L1/Power": {
+		{
+			matcher: exactMatcher("Ac/Consumption/L1/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.ac.consumption.power"),
 		},
-		"Ac/Consumption/L1/Current": {
+		{
+			matcher: exactMatcher("Ac/Consumption/L1/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.ac.consumption.current"),
 		},
-		"Ac/Grid/L1/Power": {
+		{
+			matcher: exactMatcher("Ac/Grid/L1/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.ac.grid.power"),
 		},
-		"Ac/Grid/L1/Current": {
+		{
+			matcher: exactMatcher("Ac/Grid/L1/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.ac.grid.current"),
 		},
-		"Ac/Genset/L1/Power": {
+		{
+			matcher: exactMatcher("Ac/Genset/L1/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.ac.genset.power"),
 		},
-		"Ac/Genset/L1/Current": {
+		{
+			matcher: exactMatcher("Ac/Genset/L1/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.ac.genset.current"),
 		},
-		"Dc/Battery/Power": {
+		{
+			matcher: exactMatcher("Dc/Battery/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.battery.power"),
 		},
-		"Dc/Battery/Current": {
+		{
+			matcher: exactMatcher("Dc/Battery/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.battery.current"),
 		},
-		"Dc/Battery/TimeToGo": {
+		{
+			matcher: exactMatcher("Dc/Battery/TimeToGo"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.battery.timetogo"),
 		},
-		"Dc/Battery/Soc": {
+		{
+			matcher: exactMatcher("Dc/Battery/Soc"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.battery.soc"),
 		},
-		"Dc/Pv/Power": {
+		{
+			matcher: exactMatcher("Dc/Pv/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.solar.power"),
 		},
-		"Dc/Pv/Current": {
+		{
+			matcher: exactMatcher("Dc/Pv/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.solar.current"),
 		},
-		"Dc/InverterCharger/Power": {
+		{
+			matcher: exactMatcher("Dc/InverterCharger/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.invertercharger.power"),
 		},
-		"Dc/InverterCharger/Current": {
+		{
+			matcher: exactMatcher("Dc/InverterCharger/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.invertercharger.current"),
 		},
-		"Dc/System/Power": {
+		{
+			matcher: exactMatcher("Dc/System/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.dc.power"),
 		},
-		"Dc/System/Current": {
+		{
+			matcher: exactMatcher("Dc/System/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.dc.current"),
 		},
-		"Dc/Charger/Power": {
+		{
+			matcher: exactMatcher("Dc/Charger/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.charger.power"),
 		},
-		"Dc/Charger/Current": {
+		{
+			matcher: exactMatcher("Dc/Charger/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.system.charger.current"),
 		},
 	},
 	"solarcharger": {
-		"Yield/Power": {
+		{
+			matcher: exactMatcher("Yield/Power"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.solarcharger.yield.power"),
 		},
-		"Dc/0/Current": {
+		{
+			matcher: exactMatcher("Dc/0/Current"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.solarcharger.dc.current"),
 		},
 	},
 	"tank": {
-		"Level": {
+		{
+			matcher: exactMatcher("Level"),
 			parser:  parseDoubleValue,
 			handler: gaugeHandler("victron.tank.level"),
 		},
 	},
 }
 
-func gaugeHandler(name string) func(any) pmetric.Metric {
-	return func(value any) pmetric.Metric {
+func gaugeHandler(name string) mqttHandler {
+	return func(path string, value any) pmetric.Metric {
 		v := value.(float64)
 
 		m := pmetric.NewMetric()
@@ -295,6 +345,34 @@ func gaugeHandler(name string) func(any) pmetric.Metric {
 			DataPoints().
 			AppendEmpty().
 			SetDoubleValue(v)
+
+		return m
+	}
+}
+
+func vebusDeviceHandler(name string) func(path string, value any) pmetric.Metric {
+	return func(path string, value any) pmetric.Metric {
+		// for example: "Devices/0/Ac/Out"
+		parts := strings.Split(path, "/")
+
+		var deviceID string
+		if len(parts) >= 2 {
+			deviceID = parts[1]
+		}
+
+		v := value.(float64)
+
+		m := pmetric.NewMetric()
+		m.SetName(name)
+		m.SetDescription("victron " + name)
+
+		datapoint := m.SetEmptyGauge().
+			DataPoints().
+			AppendEmpty()
+
+		datapoint.Attributes().PutStr("device_id", deviceID)
+
+		datapoint.SetDoubleValue(v)
 
 		return m
 	}
@@ -355,8 +433,16 @@ func (m *mqttReceiver) handleMessage(msg mqtt.Message) {
 		return
 	}
 
-	handler, ok := handlers[topicString]
-	if !ok {
+	var handler metricHandler
+
+	for _, h := range handlers {
+		if h.matcher != nil && h.matcher(topicString) {
+			handler = h
+			break
+		}
+	}
+
+	if handler.parser == nil || handler.handler == nil {
 		return
 	}
 
@@ -380,7 +466,7 @@ func (m *mqttReceiver) handleMessage(msg mqtt.Message) {
 		AppendEmpty().
 		Metrics()
 
-	metric := handler.handler(value)
+	metric := handler.handler(topicString, value)
 	metric.MoveTo(mm.AppendEmpty())
 
 	if err := m.nextConsumer.ConsumeMetrics(context.Background(), metrics); err != nil {
