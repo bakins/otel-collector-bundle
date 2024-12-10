@@ -3,22 +3,18 @@ module github.com/bakins/otel-collector-bundle/receiver/victronmqttreceiver
 go 1.23
 
 require (
+	github.com/eclipse/paho.mqtt.golang v1.5.0
 	go.opentelemetry.io/collector/component v0.114.0
 	go.opentelemetry.io/collector/consumer v0.114.0
 	go.opentelemetry.io/collector/pdata v1.20.0
 	go.opentelemetry.io/collector/receiver v0.114.0
 	go.uber.org/zap v1.27.0
-	gobot.io/x/gobot/v2 v2.4.0
 	golang.org/x/sync v0.9.0
 )
 
 require (
-	github.com/eclipse/paho.mqtt.golang v1.5.0 // indirect
-	github.com/gofrs/uuid v4.4.0+incompatible // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/hashicorp/errwrap v1.1.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect

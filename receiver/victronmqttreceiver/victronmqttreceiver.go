@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
-	"gobot.io/x/gobot/v2/platforms/mqtt"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -63,10 +63,8 @@ func createMetricsReceiver(
 ) (receiver.Metrics, error) {
 	cfg := rConf.(*Config)
 
-	adapter := mqtt.NewAdaptor(cfg.Endpoint, cfg.ClientID)
-
 	m := mqttReceiver{
-		adapter:      adapter,
+		config:       *cfg,
 		settings:     params.TelemetrySettings,
 		nextConsumer: consumer,
 	}
@@ -75,7 +73,8 @@ func createMetricsReceiver(
 }
 
 type mqttReceiver struct {
-	adapter        *mqtt.Adaptor
+	config         Config
+	client         mqtt.Client
 	cancelFunc     context.CancelFunc
 	settings       component.TelemetrySettings
 	systemSerialID string
@@ -84,10 +83,8 @@ type mqttReceiver struct {
 }
 
 func (m *mqttReceiver) Shutdown(ctx context.Context) error {
-	if m.adapter != nil {
-		// this never returns an error
-		_ = m.adapter.Disconnect()
-		m.adapter = nil
+	if m.client != nil {
+		m.client.Disconnect(1000)
 	}
 
 	if m.cancelFunc != nil {
@@ -102,12 +99,21 @@ func (m *mqttReceiver) Shutdown(ctx context.Context) error {
 }
 
 func (m *mqttReceiver) Start(_ context.Context, _ component.Host) error {
-	m.adapter.SetAutoReconnect(true)
-	m.adapter.SetCleanSession(false)
+	opts := (&mqtt.ClientOptions{}).
+		SetAutoReconnect(true).
+		SetKeepAlive(time.Second * 30).
+		SetConnectRetry(true).
+		SetAutoReconnect(true).
+		SetCleanSession(false).
+		AddBroker(m.config.Endpoint).
+		SetClientID(m.config.ClientID)
 
-	if err := m.adapter.Connect(); err != nil {
-		return err
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return token.Error()
 	}
+
+	m.client = client
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelFunc = cancel
@@ -120,11 +126,9 @@ func (m *mqttReceiver) Start(_ context.Context, _ component.Host) error {
 	})
 
 	eg.Go(func() error {
-		token, err := m.adapter.OnWithQOS("#", 0, m.handleMessage)
-		if err != nil {
-			m.settings.Logger.Error("failed to subscribe to topic", zap.Error(err))
-			return err
-		}
+		token := m.client.Subscribe("#", 0, func(_ mqtt.Client, msg mqtt.Message) {
+			m.handleMessage(msg)
+		})
 
 		token.Wait()
 
@@ -154,12 +158,16 @@ func (m *mqttReceiver) publishKeepalive(ctx context.Context) {
 				continue
 			}
 
-			token, err := m.adapter.PublishWithQOS(
+			token := m.client.Publish(
 				fmt.Sprintf("R/%s/system/0/Serial", m.systemSerialID),
 				0,
+				false,
 				[]byte(""),
 			)
-			if err != nil {
+
+			token.Wait()
+
+			if err := token.Error(); err != nil {
 				m.settings.Logger.Warn("failed to publish keepalive", zap.Error(err))
 				continue
 			}
@@ -384,6 +392,8 @@ type victronValue struct {
 
 func parseDoubleValue(payload []byte) (any, error) {
 	var v victronValue
+
+	fmt.Println("parseDoubleValue", string(payload))
 
 	err := json.Unmarshal(payload, &v)
 	if err != nil {
