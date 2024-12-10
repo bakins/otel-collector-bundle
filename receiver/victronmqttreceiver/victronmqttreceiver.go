@@ -109,9 +109,15 @@ func (m *mqttReceiver) Start(_ context.Context, _ component.Host) error {
 		SetClientID(m.config.ClientID)
 
 	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		return token.Error()
+
+	token := client.Connect()
+	token.Wait()
+	if err := token.Error(); err != nil {
+		m.settings.Logger.Error("failed to connect to mqtt broker", zap.Error(err))
+		return fmt.Errorf("failed to connect to mqtt %w", err)
 	}
+
+	panic("fucking die")
 
 	m.client = client
 
@@ -121,11 +127,13 @@ func (m *mqttReceiver) Start(_ context.Context, _ component.Host) error {
 	eg, ctx := errgroup.WithContext(ctx)
 
 	eg.Go(func() error {
+		m.settings.Logger.Warn("starting keepalives")
 		m.publishKeepalive(ctx)
 		return nil
 	})
 
 	eg.Go(func() error {
+		m.settings.Logger.Warn("starting subscriptions")
 		token := m.client.Subscribe("#", 0, func(_ mqtt.Client, msg mqtt.Message) {
 			m.handleMessage(msg)
 		})
