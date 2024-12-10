@@ -64,7 +64,7 @@ func createMetricsReceiver(
 	cfg := rConf.(*Config)
 
 	m := mqttReceiver{
-		config:       *cfg,
+		config:       cfg,
 		settings:     params.TelemetrySettings,
 		nextConsumer: consumer,
 	}
@@ -73,7 +73,7 @@ func createMetricsReceiver(
 }
 
 type mqttReceiver struct {
-	config         Config
+	config         *Config
 	client         mqtt.Client
 	cancelFunc     context.CancelFunc
 	settings       component.TelemetrySettings
@@ -99,40 +99,10 @@ func (m *mqttReceiver) Shutdown(ctx context.Context) error {
 }
 
 func (m *mqttReceiver) Start(_ context.Context, _ component.Host) error {
-	opts := (&mqtt.ClientOptions{}).
-		SetAutoReconnect(true).
-		SetKeepAlive(time.Second * 30).
-		SetConnectRetry(true).
-		SetAutoReconnect(true).
-		SetCleanSession(false).
-		AddBroker(m.config.Endpoint).
-		SetClientID(m.config.ClientID)
-
-	client := mqtt.NewClient(opts)
-
-	token := client.Connect()
-	token.Wait()
-	if err := token.Error(); err != nil {
-		m.settings.Logger.Error("failed to connect to mqtt broker", zap.Error(err))
-		return fmt.Errorf("failed to connect to mqtt %w", err)
-	}
-
-	panic("fucking die")
-
-	m.client = client
-
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelFunc = cancel
 
-	eg, ctx := errgroup.WithContext(ctx)
-
-	eg.Go(func() error {
-		m.settings.Logger.Warn("starting keepalives")
-		m.publishKeepalive(ctx)
-		return nil
-	})
-
-	eg.Go(func() error {
+	onConnect := func(client mqtt.Client) {
 		m.settings.Logger.Warn("starting subscriptions")
 		token := m.client.Subscribe("#", 0, func(_ mqtt.Client, msg mqtt.Message) {
 			m.handleMessage(msg)
@@ -141,14 +111,51 @@ func (m *mqttReceiver) Start(_ context.Context, _ component.Host) error {
 		token.Wait()
 
 		if err := token.Error(); err != nil {
-			m.settings.Logger.Warn("failed to subscribe to topic", zap.Error(err))
-			return err
+			m.settings.Logger.Warn("failed to subscribe to topics", zap.Error(err))
 		}
+	}
 
-		return nil
-	})
+	opts := (&mqtt.ClientOptions{}).
+		SetAutoReconnect(true).
+		SetKeepAlive(time.Second * 30).
+		SetConnectRetry(true).
+		SetAutoReconnect(true).
+		SetCleanSession(false).
+		AddBroker(m.config.Endpoint).
+		SetClientID(m.config.ClientID).
+		SetOnConnectHandler(onConnect).
+		SetMaxReconnectInterval(1 * time.Minute).
+		SetWriteTimeout(30 * time.Second).
+		SetOrderMatters(false).
+		SetCleanSession(true)
 
-	m.errorGroup = eg
+	client := mqtt.NewClient(opts)
+
+	m.settings.Logger.Warn("calling token.Wait")
+
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		return fmt.Errorf("connect failed %w", token.Error())
+	}
+
+	// token := client.Connect()
+	// m.settings.Logger.Warn("calling token.Wait")
+
+	// for !token.WaitTimeout(time.Second) {
+	// }
+
+	m.settings.Logger.Warn("after token.Wait")
+
+	// if err := token.Error(); err != nil {
+	// 	m.settings.Logger.Error("failed to connect to mqtt broker", zap.Error(err))
+	// 	return fmt.Errorf("failed to connect to mqtt %w", err)
+	// }
+
+	m.client = client
+
+	go func() {
+		m.settings.Logger.Warn("starting keepalives")
+		m.publishKeepalive(ctx)
+	}()
 
 	return nil
 }
@@ -432,6 +439,9 @@ func (m *mqttReceiver) handleMessage(msg mqtt.Message) {
 
 	if (topicString == "Serial") && (m.systemSerialID == "") {
 		value, err := parseStringValue(msg.Payload())
+
+		m.settings.Logger.Warn("got the serial number", zap.Any("serial", value), zap.Error(err))
+
 		if err != nil {
 			return
 		}
