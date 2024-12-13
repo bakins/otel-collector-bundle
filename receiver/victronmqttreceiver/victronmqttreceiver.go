@@ -74,7 +74,6 @@ func createMetricsReceiver(
 
 type mqttReceiver struct {
 	config         *Config
-	client         mqtt.Client
 	cancelFunc     context.CancelFunc
 	settings       component.TelemetrySettings
 	systemSerialID string
@@ -83,10 +82,6 @@ type mqttReceiver struct {
 }
 
 func (m *mqttReceiver) Shutdown(ctx context.Context) error {
-	if m.client != nil {
-		m.client.Disconnect(1000)
-	}
-
 	if m.cancelFunc != nil {
 		m.cancelFunc()
 	}
@@ -102,78 +97,66 @@ func (m *mqttReceiver) Start(_ context.Context, _ component.Host) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelFunc = cancel
 
-	onConnect := func(client mqtt.Client) {
-		m.settings.Logger.Warn("starting subscriptions")
-		token := m.client.Subscribe("#", 0, func(_ mqtt.Client, msg mqtt.Message) {
-			m.handleMessage(msg)
-		})
+	eg, ctx := errgroup.WithContext(ctx)
 
-		token.Wait()
+	m.errorGroup = eg
 
-		if err := token.Error(); err != nil {
-			m.settings.Logger.Warn("failed to subscribe to topics", zap.Error(err))
+	eg.Go(func() error {
+		onConnect := func(client mqtt.Client) {
+			m.settings.Logger.Warn("starting subscriptions")
+			token := client.Subscribe("#", 0, func(_ mqtt.Client, msg mqtt.Message) {
+				m.handleMessage(msg)
+			})
+
+			token.Wait()
+
+			if err := token.Error(); err != nil {
+				m.settings.Logger.Warn("failed to subscribe to topics", zap.Error(err))
+			}
 		}
-	}
 
-	opts := (&mqtt.ClientOptions{}).
-		SetAutoReconnect(true).
-		SetKeepAlive(time.Second * 30).
-		SetConnectRetry(true).
-		SetAutoReconnect(true).
-		SetCleanSession(false).
-		AddBroker(m.config.Endpoint).
-		SetClientID(m.config.ClientID).
-		SetOnConnectHandler(onConnect).
-		SetMaxReconnectInterval(1 * time.Minute).
-		SetWriteTimeout(30 * time.Second).
-		SetOrderMatters(false).
-		SetCleanSession(true)
+		client := mqtt.NewClient(createClientOptions(m.config.ClientID+"_sub", m.config, m.settings.Logger, onConnect))
 
-	client := mqtt.NewClient(opts)
+		if err := connectWait(ctx, client); err != nil {
+			return err
+		}
 
-	m.settings.Logger.Warn("calling token.Wait")
+		defer client.Disconnect(1000)
 
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		return fmt.Errorf("connect failed %w", token.Error())
-	}
+		<-ctx.Done()
 
-	// token := client.Connect()
-	// m.settings.Logger.Warn("calling token.Wait")
+		return nil
+	})
 
-	// for !token.WaitTimeout(time.Second) {
-	// }
-
-	m.settings.Logger.Warn("after token.Wait")
-
-	// if err := token.Error(); err != nil {
-	// 	m.settings.Logger.Error("failed to connect to mqtt broker", zap.Error(err))
-	// 	return fmt.Errorf("failed to connect to mqtt %w", err)
-	// }
-
-	m.client = client
-
-	go func() {
-		m.settings.Logger.Warn("starting keepalives")
-		m.publishKeepalive(ctx)
-	}()
+	eg.Go(func() error {
+		return m.publishKeepalive(ctx)
+	})
 
 	return nil
 }
 
-func (m *mqttReceiver) publishKeepalive(ctx context.Context) {
+func (m *mqttReceiver) publishKeepalive(ctx context.Context) error {
+	client, err := connect(ctx, m.config.ClientID+"_pub", m.config, m.settings.Logger)
+	if err != nil {
+		return err
+	}
+
+	defer client.Disconnect(1000)
+
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 			// Check whether we've heard back from victron mqtt yet...
 			if m.systemSerialID == "" {
 				continue
 			}
 
-			token := m.client.Publish(
+			token := client.Publish(
 				fmt.Sprintf("R/%s/system/0/Serial", m.systemSerialID),
 				0,
 				false,
@@ -190,7 +173,7 @@ func (m *mqttReceiver) publishKeepalive(ctx context.Context) {
 			for !token.WaitTimeout(time.Second * 5) {
 				select {
 				case <-ctx.Done():
-					return
+					return nil
 				default:
 				}
 			}
@@ -408,8 +391,6 @@ type victronValue struct {
 func parseDoubleValue(payload []byte) (any, error) {
 	var v victronValue
 
-	fmt.Println("parseDoubleValue", string(payload))
-
 	err := json.Unmarshal(payload, &v)
 	if err != nil {
 		return nil, err
@@ -517,4 +498,64 @@ func parseStringValue(payload []byte) (any, error) {
 
 type victronStringValue struct {
 	Value *string `json:"value"`
+}
+
+func createClientOptions(clientID string, config *Config, logger *zap.Logger, onConnectionHandler mqtt.OnConnectHandler) *mqtt.ClientOptions {
+	opts := mqtt.NewClientOptions()
+
+	opts.SetAutoReconnect(true)
+	opts.SetMaxReconnectInterval(1 * time.Minute)
+	opts.SetWriteTimeout(30 * time.Second)
+	opts.SetOrderMatters(false)
+
+	opts.SetOnConnectHandler(newConnectionHandler(clientID, onConnectionHandler, logger))
+
+	opts.SetClientID(clientID)
+	opts.SetCleanSession(true)
+	opts.AddBroker(config.Endpoint)
+
+	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+		logger.Warn("mqtt connection lost", zap.Error(err), zap.String("client_id", clientID))
+	})
+
+	return opts
+}
+
+func newConnectionHandler(clientID string, wrapped mqtt.OnConnectHandler, logger *zap.Logger) mqtt.OnConnectHandler {
+	return func(c mqtt.Client) {
+		logger.Info("mqtt connected", zap.String("client_id", clientID))
+
+		if wrapped != nil {
+			wrapped(c)
+		}
+	}
+}
+
+func connect(ctx context.Context, clientID string, config *Config, logger *zap.Logger) (mqtt.Client, error) {
+	client := mqtt.NewClient(createClientOptions(clientID, config, logger, nil))
+
+	return client, connectWait(ctx, client)
+}
+
+func connectWait(ctx context.Context, client mqtt.Client) error {
+	token := client.Connect()
+
+LOOP:
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			if !token.WaitTimeout(3 * time.Second) {
+				break LOOP
+			}
+		}
+	}
+
+	err := token.Error()
+	if err != nil {
+		return fmt.Errorf("failed to connect to mqtt: %w", err)
+	}
+
+	return nil
 }
