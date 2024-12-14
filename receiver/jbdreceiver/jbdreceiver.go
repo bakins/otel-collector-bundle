@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	retry "github.com/avast/retry-go/v4"
@@ -155,7 +156,7 @@ func (r *jbdReceiver) discoverBattery(ctx context.Context) error {
 
 	var found bool
 	r.scanner.Scan(ctx, func(rc bleutil.ScanResult) {
-		if rc.Address == r.address.String() {
+		if strings.ToLower(rc.Address) == strings.ToLower(r.address.String()) {
 			found = true
 			cancel()
 		}
@@ -244,9 +245,10 @@ func (r *jbdReceiver) handleBattery(ctx context.Context) error {
 	generalCallback := func(data []byte) {
 		metrics := pmetric.NewMetrics()
 
-		slice := metrics.ResourceMetrics().AppendEmpty().
-			ScopeMetrics().AppendEmpty().
-			Metrics()
+		resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
+		resourceMetrics.Resource().Attributes().PutStr("address", r.address.String())
+
+		slice := resourceMetrics.ScopeMetrics().AppendEmpty().Metrics()
 
 		v := float64(binary.BigEndian.Uint16(data[:2])) / 100.0
 

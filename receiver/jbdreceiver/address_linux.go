@@ -2,7 +2,7 @@ package jbdreceiver
 
 import "tinygo.org/x/bluetooth"
 
-func (b *bluetoothAdress) UnmarshalText(text []byte) error {
+func (b *bluetoothAddress) UnmarshalText(text []byte) error {
 	mac, err := bluetooth.ParseMAC(string(text))
 	if err != nil {
 		return err
