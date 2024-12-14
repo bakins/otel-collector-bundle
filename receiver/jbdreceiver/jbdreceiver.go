@@ -94,7 +94,8 @@ func (r *jbdReceiver) Start(_ context.Context, host component.Host) error {
 		r.scanner = scanner
 	}
 
-	// to do start worker
+	go r.worker(ctx)
+
 	return nil
 }
 
@@ -119,7 +120,6 @@ func (r *jbdReceiver) worker(ctx context.Context) {
 				)
 			}
 			time.Sleep(time.Second)
-
 		}
 	}
 }
