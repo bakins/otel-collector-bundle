@@ -2,7 +2,10 @@ module github.com/bakins/otel-collector-bundle/bleutil
 
 go 1.23
 
-require tinygo.org/x/bluetooth v0.10.0
+require (
+	github.com/bakins/bluetooth v0.0.0-20241214222817-843e125d8b16
+	golang.org/x/sync v0.10.0
+)
 
 require (
 	github.com/go-ole/go-ole v1.2.6 // indirect

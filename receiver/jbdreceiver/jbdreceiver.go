@@ -16,7 +16,8 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
 	"go.uber.org/zap"
-	"tinygo.org/x/bluetooth"
+
+	"github.com/bakins/bluetooth"
 
 	"github.com/bakins/otel-collector-bundle/bleutil"
 )
@@ -24,7 +25,8 @@ import (
 var typeStr = component.MustNewType("jbd")
 
 type Config struct {
-	Address string `mapstructure:"address"`
+	Address    string            `mapstructure:"address"`
+	Attributes map[string]string `mapstructure:"attributes"`
 }
 
 type bluetoothAddress struct {
@@ -50,12 +52,13 @@ type jbdReceiver struct {
 	config       *Config
 	address      bluetooth.Address
 	nextConsumer consumer.Metrics
-	scanner      bleutil.Scanner
 	logger       *zap.Logger
 }
 
 func createDefaultConfig() component.Config {
-	return &Config{}
+	return &Config{
+		Attributes: map[string]string{},
+	}
 }
 
 func NewFactory() receiver.Factory {
@@ -87,15 +90,13 @@ func (r *jbdReceiver) Start(_ context.Context, host component.Host) error {
 	ctx := context.Background()
 	ctx, r.cancel = context.WithCancel(ctx)
 
-	if r.scanner == nil {
-		scanner, err := bleutil.DefaultScanner()
-		if err != nil {
-			return err
-		}
-		r.scanner = scanner
+	adapter := bluetooth.NewAdapter("")
+
+	if err := adapter.Enable(); err != nil {
+		return fmt.Errorf("unable to enable bluetooth adapter %w", err)
 	}
 
-	go r.worker(ctx)
+	go r.worker(ctx, adapter)
 
 	return nil
 }
@@ -108,13 +109,13 @@ func (r *jbdReceiver) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (r *jbdReceiver) worker(ctx context.Context) {
+func (r *jbdReceiver) worker(ctx context.Context, adapter *bluetooth.Adapter) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			if err := r.handleBattery(ctx); err != nil {
+			if err := r.handleBattery(ctx, adapter); err != nil {
 				r.logger.Warn("failed to handle battery metrics",
 					zap.Error(err),
 					zap.Stringer("address", r.address),
@@ -150,17 +151,22 @@ var (
 	requestCellVoltages = []byte{0xdd, 0xa5, responseCellVoltages, 0x0, 0xff, 0xfc, 0x77}
 )
 
-func (r *jbdReceiver) discoverBattery(ctx context.Context) error {
+func (r *jbdReceiver) discoverBattery(ctx context.Context, adapter *bluetooth.Adapter) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 
-	var found bool
-	r.scanner.Scan(ctx, func(rc bleutil.ScanResult) {
-		if strings.ToLower(rc.Address) == strings.ToLower(r.address.String()) {
+	found := false
+	err := bleutil.Scan(ctx, adapter, func(ctx context.Context, result bluetooth.ScanResult) bool {
+		if strings.ToLower(result.Address.String()) == strings.ToLower(r.address.String()) {
 			found = true
-			cancel()
+			return false
 		}
+		return true
 	})
+	if err != nil {
+		r.logger.Error("bluetooth scan failed", zap.Error(err))
+		return err
+	}
 
 	if !found {
 		return fmt.Errorf("failed to discover battery %s", r.address.String())
@@ -169,12 +175,10 @@ func (r *jbdReceiver) discoverBattery(ctx context.Context) error {
 	return nil
 }
 
-func (r *jbdReceiver) handleBattery(ctx context.Context) error {
-	if err := r.discoverBattery(ctx); err != nil {
+func (r *jbdReceiver) handleBattery(ctx context.Context, adapter *bluetooth.Adapter) error {
+	if err := r.discoverBattery(ctx, adapter); err != nil {
 		return err
 	}
-
-	adapter := bluetooth.DefaultAdapter
 
 	var conn bluetooth.Device
 	err := retry.Do(func() error {
@@ -246,7 +250,13 @@ func (r *jbdReceiver) handleBattery(ctx context.Context) error {
 		metrics := pmetric.NewMetrics()
 
 		resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
-		resourceMetrics.Resource().Attributes().PutStr("address", r.address.String())
+		attributes := resourceMetrics.Resource().Attributes()
+
+		for k, v := range r.config.Attributes {
+			attributes.PutStr(k, v)
+		}
+
+		attributes.PutStr("address", r.address.String())
 
 		slice := resourceMetrics.ScopeMetrics().AppendEmpty().Metrics()
 

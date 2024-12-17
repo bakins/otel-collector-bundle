@@ -6,13 +6,13 @@ replace github.com/bakins/otel-collector-bundle/bleutil => ../../bleutil
 
 require (
 	github.com/avast/retry-go/v4 v4.6.0
+	github.com/bakins/bluetooth v0.0.0-20241214222817-843e125d8b16
 	github.com/bakins/otel-collector-bundle/bleutil v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/collector/component v0.114.0
 	go.opentelemetry.io/collector/consumer v0.114.0
 	go.opentelemetry.io/collector/pdata v1.20.0
 	go.opentelemetry.io/collector/receiver v0.114.0
 	go.uber.org/zap v1.27.0
-	tinygo.org/x/bluetooth v0.10.0
 )
 
 require (
@@ -36,6 +36,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230728194245-b0cb94b80691 // indirect
 	golang.org/x/net v0.31.0 // indirect
+	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/text v0.20.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241007155032-5fefd90f89a9 // indirect

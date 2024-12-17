@@ -177,7 +177,7 @@ func (s *dbusScraper) handleDevice(ctx context.Context, path string) (pmetric.Me
 		instanceID = 0
 	}
 
-	if instanceID > 0 {
+	if instanceID >= 0 {
 		attributes.PutStr("instance_id", strconv.Itoa(int(instanceID)))
 	}
 
@@ -195,7 +195,9 @@ func (s *dbusScraper) handleDevice(ctx context.Context, path string) (pmetric.Me
 				continue
 			}
 			metric := h.handler(k, v)
-			metric.MoveTo(mm.AppendEmpty())
+			if metric.Name() != "" {
+				metric.MoveTo(mm.AppendEmpty())
+			}
 		}
 	}
 
@@ -252,45 +254,20 @@ func getDeviceId(values map[string]any) int64 {
 // see https://github.com/victronenergy/venus/wiki/dbus
 // limited to what I care about right now.
 
-// currently only handles inverters
-func (s *dbusScraper) handleVebus(remainder string, values map[string]any) (pmetric.Metrics, error) {
-	metrics := pmetric.NewMetrics()
-
-	var powerOut float64
-	if err := getValue(values, "Ac/Out/P", &powerOut); err != nil {
-		return metrics, err
-	}
-
-	r := metrics.ResourceMetrics().AppendEmpty()
-
-	attributes := r.Resource().Attributes()
-	attributes.PutStr("local_id", remainder)
-
-	m := r.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
-	m.SetDescription("AC power out")
-	m.SetName("victron.ac.output.power_watts")
-	m.SetEmptyGauge().
-		DataPoints().
-		AppendEmpty().
-		SetDoubleValue(powerOut)
-
-	return metrics, nil
-}
-
 var errNotFound = errors.New("value not found")
 
 func getValue(values map[string]any, key string, dest any) error {
+	val, ok := values[key]
+	if !ok {
+		return errNotFound
+	}
+
 	t := reflect.TypeOf(dest)
 	if t.Kind() != reflect.Pointer {
 		return fmt.Errorf("must pass pointer, got %T", dest)
 	}
 
 	rv := reflect.ValueOf(dest).Elem()
-
-	val, ok := values[key]
-	if !ok {
-		return errNotFound
-	}
 
 	switch rv.Kind() {
 	case reflect.Int64:
@@ -340,6 +317,28 @@ func getValue(values map[string]any, key string, dest any) error {
 }
 
 var metricTypes = map[string][]metricHandler{
+	"battery": {
+		{
+			handler: gaugeHandler("victron.battery.voltage"),
+			matcher: exactMatcher("Dc/0/Voltage"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.current"),
+			matcher: exactMatcher("Dc/0/Current"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.power"),
+			matcher: exactMatcher("Dc/0/Power"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.temperature"),
+			matcher: exactMatcher("Dc/0/Temperature"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.soc"),
+			matcher: exactMatcher("Soc"),
+		},
+	},
 	"vebus": {
 		{
 			handler: gaugeHandler("victron.ac.output_power"),
@@ -461,6 +460,8 @@ func gaugeHandler(name string) valueHandler {
 			datapoint.SetDoubleValue(vv)
 		case int64:
 			datapoint.SetIntValue(vv)
+		default:
+			return pmetric.Metric{}
 		}
 
 		return m

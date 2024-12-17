@@ -4,9 +4,88 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
-	"tinygo.org/x/bluetooth"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/bakins/bluetooth"
 )
+
+func Scan(
+	ctx context.Context,
+	adapter *bluetooth.Adapter,
+	callback func(ctx context.Context, result bluetooth.ScanResult) bool,
+) error {
+	running := &atomic.Bool{}
+	running.Store(true)
+
+	// so the go routing waiting on context can finish
+	done := make(chan struct{})
+
+	stopScan := func() {
+		if running.CompareAndSwap(true, false) {
+			// only returns an error if not scanning
+			// must only call once
+			_ = adapter.StopScan()
+			close(done)
+		}
+	}
+
+	eg, ctx := errgroup.WithContext(ctx)
+
+	eg.Go(func() error {
+		select {
+		case <-ctx.Done():
+			stopScan()
+		case <-done:
+			stopScan()
+		}
+
+		return nil
+	})
+
+	gotMessage := make(chan time.Time)
+
+	eg.Go(func() error {
+		// if we don't get anything within 60 seconds, assume bluetooth failed
+		// it happens a lot on my raspberry pi
+		ticker := time.NewTicker(time.Second * 20)
+		defer ticker.Stop()
+
+		lastUpdate := time.Now()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case update := <-gotMessage:
+				lastUpdate = update
+			case now := <-ticker.C:
+				if !running.Load() {
+					return nil
+				}
+
+				if now.Sub(lastUpdate).Seconds() > 60.0 {
+					stopScan()
+
+					return fmt.Errorf("bluetooth scan failed")
+				}
+			}
+		}
+	})
+
+	eg.Go(func() error {
+		return adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
+			gotMessage <- time.Now()
+			if !callback(ctx, result) {
+				stopScan()
+			}
+		})
+	})
+
+	return eg.Wait()
+}
 
 type Scanner interface {
 	Scan(ctx context.Context, callback func(ScanResult))

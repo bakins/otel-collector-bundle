@@ -1,6 +1,6 @@
 package jbdreceiver
 
-import "tinygo.org/x/bluetooth"
+import "github.com/bakins/bluetooth"
 
 func (b *bluetoothAddress) UnmarshalText(text []byte) error {
 	uuid, err := bluetooth.ParseUUID(string(text))
