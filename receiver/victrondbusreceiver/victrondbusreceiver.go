@@ -177,11 +177,15 @@ func (s *dbusScraper) handleDevice(ctx context.Context, path string) (pmetric.Me
 		instanceID = 0
 	}
 
-	if instanceID > 0 {
+	if instanceID >= 0 {
 		attributes.PutStr("instance_id", strconv.Itoa(int(instanceID)))
 	}
 
 	attributes.PutStr("component_type", deviceType)
+
+	if customName := getCustomName(converted); customName != "" {
+		attributes.PutStr("custom_name", customName)
+	}
 
 	mm := r.ScopeMetrics().
 		AppendEmpty().
@@ -238,6 +242,15 @@ func convertValues(input map[string]map[string]dbus.Variant) map[string]any {
 	}
 
 	return output
+}
+
+func getCustomName(values map[string]any) string {
+	var name string
+	if err := getValue(values, "CustomName", &name); err != nil {
+		return ""
+	}
+
+	return name
 }
 
 func getDeviceId(values map[string]any) int64 {
@@ -340,6 +353,17 @@ func getValue(values map[string]any, key string, dest any) error {
 }
 
 var metricTypes = map[string][]metricHandler{
+	"temperature": {
+		// https://github.com/victronenergy/venus/wiki/dbus#temperatures
+		{
+			matcher: exactMatcher("Temperature"),
+			handler: gaugeHandler("victron_environment_temperature"),
+		},
+		{
+			matcher: exactMatcher("Humidity"),
+			handler: gaugeHandler("victron_environment_humidity"),
+		},
+	},
 	"vebus": {
 		{
 			handler: gaugeHandler("victron.ac.output_power"),
