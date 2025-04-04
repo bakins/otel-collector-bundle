@@ -2,16 +2,16 @@ package signalkreceiver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/avast/retry-go/v4"
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -76,7 +76,7 @@ type signalkReceiver struct {
 
 func (r *signalkReceiver) Start(_ context.Context, host component.Host) error {
 	ctx := context.Background()
-	ctx, r.cancel = context.WithCancel(ctx)
+	ctx, r.cancel = context.WithCancel(context.Background())
 
 	go func() {
 		r.receiveMetrics(ctx)
@@ -94,44 +94,50 @@ func (r *signalkReceiver) Shutdown(ctx context.Context) error {
 }
 
 func (r *signalkReceiver) receiveMetrics(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
+	err := retry.Do(func() error {
+		err := r.doReceiveMetrics(ctx)
+		switch {
+		case errors.Is(err, context.Canceled):
+			return nil
+		// this generally means the context inside the function was canceled
+		// the check for the parent context above will catch the outer cancel
 		default:
-			err := r.doReceiveMetrics(ctx)
-			switch {
-			case errors.Is(err, context.Canceled):
-				// this generally means the context inside the function was canceled
-				// the check for the parent context above will catch the outer cancel
-			case strings.Contains(err.Error(), "use of closed network connection"):
-				// usually means websocket was closed, fine to continue
-			default:
-				r.settings.Logger.Warn("failed to collect signalk metrics", zap.Error(err))
-				time.Sleep(time.Second)
-			}
+			return err
 		}
+	},
+		retry.Context(ctx),
+		retry.MaxDelay(time.Second*5),
+		retry.MaxJitter(time.Second),
+		retry.Attempts(0),
+		retry.LastErrorOnly(true),
+		retry.OnRetry(
+			func(attempt uint, err error) {
+				r.settings.Logger.Warn(
+					"signalk retry",
+					zap.Uint("attempt", attempt),
+					zap.Error(err),
+				)
+			},
+		),
+	)
+	if err != nil {
+		r.settings.Logger.Error("signalk fatal", zap.Error(err))
 	}
 }
 
 func (r *signalkReceiver) doReceiveMetrics(ctx context.Context) error {
-	// occasionally the stream of events just drops, so reconnect periodically.
-	// the stream tends to just hang :shrug:
-	ctx, cancel := context.WithTimeout(ctx, time.Minute*5)
-	defer cancel()
-
-	d := &websocket.Dialer{}
-	conn, resp, err := d.DialContext(ctx, "ws://"+r.config.Endpoint+"/signalk/v1/stream?subscribe=none", nil)
+	conn, resp, err := websocket.Dial(ctx, "ws://"+r.config.Endpoint+"/signalk/v1/stream?subscribe=none", nil)
 	if err != nil {
 		return err
 	}
 
+	defer conn.CloseNow()
 	if resp.StatusCode != 101 {
 		return fmt.Errorf("unexpected http code %d", resp.StatusCode)
 	}
 
 	// need to read server connection data first
-	_, _, err = conn.ReadMessage()
+	_, _, err = conn.Read(ctx)
 	if err != nil {
 		return err
 	}
@@ -153,18 +159,14 @@ func (r *signalkReceiver) doReceiveMetrics(ctx context.Context) error {
 
 	eg.Go(func() error {
 		<-ctx.Done()
-		_ = conn.Close()
+		_ = conn.Close(websocket.StatusNormalClosure, "")
 
 		return nil
 	})
 
 	eg.Go(func() error {
 		// subscriptions will start flowing as soon as this returns
-		if err := conn.WriteJSON(&req); err != nil {
-			return err
-		}
-
-		return nil
+		return wsjson.Write(ctx, conn, &req)
 	})
 
 	eg.Go(func() error {
@@ -180,18 +182,10 @@ func (r *signalkReceiver) websocketWorker(ctx context.Context, conn *websocket.C
 		case <-ctx.Done():
 			return nil
 		default:
-			_, reader, err := conn.NextReader()
-			if err != nil {
-				return err
-			}
-
 			var message deltaMessage
-			if err := json.NewDecoder(reader).Decode(&message); err != nil {
-				if strings.Contains(err.Error(), "use of closed network connection") {
-					return nil
-				}
-				slog.ErrorContext(ctx, "failed to read json from websocket", "error", err)
-				continue
+
+			if err := wsjson.Read(ctx, conn, &message); err != nil {
+				return err
 			}
 
 			select {

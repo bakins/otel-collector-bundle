@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
-	"go.opentelemetry.io/collector/receiver/scraperhelper"
+	"go.opentelemetry.io/collector/scraper/scraperhelper"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
@@ -70,18 +70,12 @@ func createMetricsReceiver(
 	cfg := rConf.(*Config)
 
 	ns := newStarlinkScraper(params, cfg)
-	scraper, err := scraperhelper.NewScraperWithoutType(
-		ns.scrape,
-		scraperhelper.WithStart(ns.start),
-		scraperhelper.WithShutdown(ns.shutdown),
-	)
-	if err != nil {
-		return nil, err
-	}
 
-	return scraperhelper.NewScraperControllerReceiver(
-		&cfg.ControllerConfig, params, consumer,
-		scraperhelper.AddScraperWithType(typeStr, scraper),
+	return scraperhelper.NewMetricsController(
+		&cfg.ControllerConfig,
+		params,
+		consumer,
+		scraperhelper.AddScraper(typeStr, ns),
 	)
 }
 
@@ -100,7 +94,7 @@ func newStarlinkScraper(settings receiver.Settings, cfg *Config) *starlinkScrape
 	return s
 }
 
-func (s *starlinkScraper) shutdown(_ context.Context) error {
+func (s *starlinkScraper) Shutdown(_ context.Context) error {
 	if s.clientConn == nil {
 		return nil
 	}
@@ -112,7 +106,7 @@ func (s *starlinkScraper) shutdown(_ context.Context) error {
 	return err
 }
 
-func (s *starlinkScraper) start(ctx context.Context, host component.Host) error {
+func (s *starlinkScraper) Start(ctx context.Context, host component.Host) error {
 	clientConn, err := s.cfg.ClientConfig.ToClientConn(ctx, host, s.settings)
 	if err != nil {
 		return err
@@ -121,7 +115,7 @@ func (s *starlinkScraper) start(ctx context.Context, host component.Host) error 
 	return nil
 }
 
-func (s *starlinkScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
+func (s *starlinkScraper) ScrapeMetrics(ctx context.Context) (pmetric.Metrics, error) {
 	if s.clientConn == nil {
 		return pmetric.Metrics{}, errors.New("grpc not connected")
 	}

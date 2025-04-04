@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
-	"go.opentelemetry.io/collector/receiver/scraperhelper"
+	"go.opentelemetry.io/collector/scraper/scraperhelper"
 	"go.uber.org/zap"
 )
 
@@ -56,18 +56,12 @@ func createMetricsReceiver(
 	cfg := rConf.(*Config)
 
 	ns := newDbusScraper(params, cfg)
-	scraper, err := scraperhelper.NewScraperWithoutType(
-		ns.scrape,
-		scraperhelper.WithStart(ns.start),
-		scraperhelper.WithShutdown(ns.shutdown),
-	)
-	if err != nil {
-		return nil, err
-	}
 
-	return scraperhelper.NewScraperControllerReceiver(
-		&cfg.ControllerConfig, params, consumer,
-		scraperhelper.AddScraperWithType(typeStr, scraper),
+	return scraperhelper.NewMetricsController(
+		&cfg.ControllerConfig,
+		params,
+		consumer,
+		scraperhelper.AddScraper(typeStr, ns),
 	)
 }
 
@@ -86,7 +80,7 @@ func newDbusScraper(settings receiver.Settings, cfg *Config) *dbusScraper {
 	return s
 }
 
-func (s *dbusScraper) shutdown(_ context.Context) error {
+func (s *dbusScraper) Shutdown(_ context.Context) error {
 	if s.conn != nil {
 		return s.conn.Close()
 	}
@@ -94,7 +88,7 @@ func (s *dbusScraper) shutdown(_ context.Context) error {
 	return nil
 }
 
-func (s *dbusScraper) start(ctx context.Context, host component.Host) error {
+func (s *dbusScraper) Start(ctx context.Context, host component.Host) error {
 	var c *dbus.Conn
 	var err error
 	if s.cfg.Address != "" {
@@ -116,7 +110,7 @@ func (s *dbusScraper) start(ctx context.Context, host component.Host) error {
 
 const victronPrefix = "com.victronenergy."
 
-func (s *dbusScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
+func (s *dbusScraper) ScrapeMetrics(ctx context.Context) (pmetric.Metrics, error) {
 	metrics := pmetric.NewMetrics()
 	if s.conn == nil {
 		return metrics, errors.New("dbus connection not configured")
@@ -353,6 +347,28 @@ func getValue(values map[string]any, key string, dest any) error {
 }
 
 var metricTypes = map[string][]metricHandler{
+	"battery": {
+		{
+			handler: gaugeHandler("victron.battery.voltage"),
+			matcher: exactMatcher("Dc/0/Voltage"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.current"),
+			matcher: exactMatcher("Dc/0/Current"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.power"),
+			matcher: exactMatcher("Dc/0/Power"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.temperature"),
+			matcher: exactMatcher("Dc/0/Temperature"),
+		},
+		{
+			handler: gaugeHandler("victron.battery.soc"),
+			matcher: exactMatcher("Soc"),
+		},
+	},
 	"temperature": {
 		// https://github.com/victronenergy/venus/wiki/dbus#temperatures
 		{
@@ -410,6 +426,10 @@ var metricTypes = map[string][]metricHandler{
 		{
 			matcher: exactMatcher("Dc/Battery/Current"),
 			handler: gaugeHandler("victron.system.battery.current"),
+		},
+		{
+			matcher: exactMatcher("Dc/Battery/Voltage"),
+			handler: gaugeHandler("victron.system.battery.voltage"),
 		},
 		{
 			matcher: exactMatcher("Dc/Battery/TimeToGo"),

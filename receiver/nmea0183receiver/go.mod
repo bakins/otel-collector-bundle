@@ -1,19 +1,17 @@
-module github.com/bakins/otel-collector-bundle/receiver/signalkreceiver
+module github.com/bakins/otel-collector-bundle/receiver/nmea0183receiver
 
-go 1.23
+go 1.24
 
 require (
+	github.com/adrianmo/go-nmea v1.10.0
 	go.opentelemetry.io/collector/component v0.114.0
 	go.opentelemetry.io/collector/consumer v0.114.0
 	go.opentelemetry.io/collector/pdata v1.20.0
 	go.opentelemetry.io/collector/receiver v0.114.0
-	go.uber.org/zap v1.27.0
 	golang.org/x/sync v0.9.0
 )
 
 require (
-	github.com/avast/retry-go/v4 v4.6.0
-	github.com/coder/websocket v1.8.12
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -24,6 +22,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.32.0 // indirect
 	go.opentelemetry.io/otel/trace v1.32.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/net v0.31.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/text v0.20.0 // indirect

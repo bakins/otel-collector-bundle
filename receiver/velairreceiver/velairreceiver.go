@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/receiver"
-	"go.opentelemetry.io/collector/receiver/scraperhelper"
+	"go.opentelemetry.io/collector/scraper/scraperhelper"
 	"go.uber.org/zap"
 
 	"github.com/bakins/velair"
@@ -72,18 +72,11 @@ func createMetricsReceiver(
 		cfg:      cfg,
 	}
 
-	scraper, err := scraperhelper.NewScraperWithoutType(
-		ns.scrape,
-		scraperhelper.WithStart(ns.start),
-		scraperhelper.WithShutdown(ns.shutdown),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return scraperhelper.NewScraperControllerReceiver(
-		&cfg.ControllerConfig, params, consumer,
-		scraperhelper.AddScraperWithType(typeStr, scraper),
+	return scraperhelper.NewMetricsController(
+		&cfg.ControllerConfig,
+		params,
+		consumer,
+		scraperhelper.AddScraper(typeStr, ns),
 	)
 }
 
@@ -93,11 +86,11 @@ type velairScraper struct {
 	client   *velair.Client
 }
 
-func (s *velairScraper) shutdown(_ context.Context) error {
+func (s *velairScraper) Shutdown(_ context.Context) error {
 	return nil
 }
 
-func (s *velairScraper) start(ctx context.Context, host component.Host) error {
+func (s *velairScraper) Start(ctx context.Context, host component.Host) error {
 	httpClient, err := s.cfg.ToClient(ctx, host, s.settings)
 	if err != nil {
 		return err
@@ -113,7 +106,7 @@ func (s *velairScraper) start(ctx context.Context, host component.Host) error {
 	return nil
 }
 
-func (s *velairScraper) scrape(ctx context.Context) (pmetric.Metrics, error) {
+func (s *velairScraper) ScrapeMetrics(ctx context.Context) (pmetric.Metrics, error) {
 	if s.client == nil {
 		return pmetric.Metrics{}, errors.New("http client not configured")
 	}
