@@ -107,7 +107,7 @@ func (s *starlinkScraper) Shutdown(_ context.Context) error {
 }
 
 func (s *starlinkScraper) Start(ctx context.Context, host component.Host) error {
-	clientConn, err := s.cfg.ClientConfig.ToClientConn(ctx, host.GetExtensions(), s.settings)
+	clientConn, err := s.cfg.ToClientConn(ctx, host.GetExtensions(), s.settings)
 	if err != nil {
 		return err
 	}
