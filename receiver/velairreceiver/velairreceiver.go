@@ -91,7 +91,7 @@ func (s *velairScraper) Shutdown(_ context.Context) error {
 }
 
 func (s *velairScraper) Start(ctx context.Context, host component.Host) error {
-	httpClient, err := s.cfg.ToClient(ctx, host, s.settings)
+	httpClient, err := s.cfg.ToClient(ctx, host.GetExtensions(), s.settings)
 	if err != nil {
 		return err
 	}

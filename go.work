@@ -1,10 +1,11 @@
-go 1.23.3
+go 1.26.2
 
 use (
 	.
 	./exporter/mqttexporter
+	./receiver/nmea0183receiver
 	./receiver/signalkreceiver
 	./receiver/starlinkreceiver
 	./receiver/velairreceiver
-	./receiver/victronmqttreceiver
+	./receiver/victrondbusreceiver
 )
