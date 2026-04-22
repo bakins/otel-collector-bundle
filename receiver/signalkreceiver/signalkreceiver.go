@@ -74,8 +74,8 @@ type signalkReceiver struct {
 	nextConsumer consumer.Metrics
 }
 
-func (r *signalkReceiver) Start(_ context.Context, host component.Host) error {
-	ctx := context.Background()
+func (r *signalkReceiver) Start(_ context.Context, _ component.Host) error {
+	var ctx context.Context
 	ctx, r.cancel = context.WithCancel(context.Background())
 
 	go func() {
@@ -131,7 +131,7 @@ func (r *signalkReceiver) doReceiveMetrics(ctx context.Context) error {
 		return err
 	}
 
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	if resp.StatusCode != 101 {
 		return fmt.Errorf("unexpected http code %d", resp.StatusCode)
 	}

@@ -80,9 +80,8 @@ func createMetricsExporter(
 }
 
 type mqttExporter struct {
-	adapter      *mqtt.Adaptor
-	settings     component.TelemetrySettings
-	nextConsumer consumer.Metrics
+	adapter  *mqtt.Adaptor
+	settings component.TelemetrySettings
 }
 
 func (m *mqttExporter) Shutdown(ctx context.Context) error {
@@ -162,8 +161,8 @@ func (m *mqttExporter) consumeMetrics(_ context.Context, metrics pmetric.Metrics
 					}
 
 					topic := metric.Name()
-					topic = strings.Replace(topic, ".", "/", -1)
-					topic = strings.Replace(topic, " ", "_", -1)
+					topic = strings.ReplaceAll(topic, ".", "/")
+					topic = strings.ReplaceAll(topic, " ", "_")
 					topic = strings.ToLower(topic)
 
 					m.adapter.Publish(topic, data)

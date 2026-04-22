@@ -61,7 +61,7 @@ func createMetricsReceiver(
 		&cfg.ControllerConfig,
 		params,
 		consumer,
-		scraperhelper.AddScraper(typeStr, ns),
+		scraperhelper.AddMetricsScraper(typeStr, ns),
 	)
 }
 
@@ -254,34 +254,6 @@ func getDeviceId(values map[string]any) int64 {
 	}
 
 	return instanceId
-}
-
-// see https://github.com/victronenergy/venus/wiki/dbus
-// limited to what I care about right now.
-
-// currently only handles inverters
-func (s *dbusScraper) handleVebus(remainder string, values map[string]any) (pmetric.Metrics, error) {
-	metrics := pmetric.NewMetrics()
-
-	var powerOut float64
-	if err := getValue(values, "Ac/Out/P", &powerOut); err != nil {
-		return metrics, err
-	}
-
-	r := metrics.ResourceMetrics().AppendEmpty()
-
-	attributes := r.Resource().Attributes()
-	attributes.PutStr("local_id", remainder)
-
-	m := r.ScopeMetrics().AppendEmpty().Metrics().AppendEmpty()
-	m.SetDescription("AC power out")
-	m.SetName("victron.ac.output.power_watts")
-	m.SetEmptyGauge().
-		DataPoints().
-		AppendEmpty().
-		SetDoubleValue(powerOut)
-
-	return metrics, nil
 }
 
 var errNotFound = errors.New("value not found")
