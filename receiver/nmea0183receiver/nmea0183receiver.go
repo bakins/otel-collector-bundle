@@ -81,8 +81,7 @@ func (r *nmea0183Receiver) Start(_ context.Context, host component.Host) error {
 
 	eg.Go(func() error {
 		<-ctx.Done()
-		conn.Close()
-		return nil
+		return conn.Close()
 	})
 
 	eg.Go(func() error {
@@ -123,10 +122,7 @@ func (r *nmea0183Receiver) Start(_ context.Context, host component.Host) error {
 	})
 
 	go func() {
-		err := eg.Wait()
-		if err != nil && err != context.Canceled {
-			// log error?
-		}
+		_ = eg.Wait()
 		close(sentences)
 	}()
 
@@ -287,9 +283,7 @@ func handleSentences(ctx context.Context, next consumer.Metrics, sentences <-cha
 				addCommonAttributes(r.Attributes(), sentence)
 			}
 
-			if err := next.ConsumeMetrics(ctx, metrics); err != nil {
-				// log???
-			}
+			_ = next.ConsumeMetrics(ctx, metrics)
 		}
 	}
 }

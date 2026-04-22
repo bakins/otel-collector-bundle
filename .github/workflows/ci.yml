@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - exporter/mqttexporter
+          - receiver/nmea0183receiver
+          - receiver/signalkreceiver
+          - receiver/starlinkreceiver
+          - receiver/velairreceiver
+          - receiver/victrondbusreceiver
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      - name: Test
+        run: go test ./...
+        working-directory: ${{ matrix.module }}
+
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - exporter/mqttexporter
+          - receiver/nmea0183receiver
+          - receiver/signalkreceiver
+          - receiver/starlinkreceiver
+          - receiver/velairreceiver
+          - receiver/victrondbusreceiver
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          working-directory: ${{ matrix.module }}
